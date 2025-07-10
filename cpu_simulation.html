@@ -467,7 +467,35 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
           time = +(time + p.burst).toFixed(2);
           logCompletion(p);
         }
-      } else if (algo === 'Priority') {
+              } else if (algo === 'Priority' && isPreemptive) {
+        while (completed < n) {
+          const available = pList.filter(p => p.arrival <= time && p.remaining > 0);
+          if (available.length === 0) {
+            ganttLog.push({ id: 'Idle', color: '#ccc', duration: 0.1 });
+            time = +(time + 0.1).toFixed(1);
+            continue;
+          }
+
+          // Sort by priority (lower number = higher priority)
+          available.sort((a, b) => a.priority - b.priority);
+          const current = available[0];
+
+          current.remaining = +(current.remaining - 0.1).toFixed(1);
+          time = +(time + 0.1).toFixed(1);
+
+          const last = ganttLog[ganttLog.length - 1];
+          if (last && last.id === `P${current.id}`) {
+            last.duration = +(last.duration + 0.1).toFixed(1);
+          } else {
+            ganttLog.push({ id: `P${current.id}`, color: current.color, duration: 0.1 });
+          }
+
+          if (Math.abs(current.remaining) < 1e-9) {
+            logCompletion(current);
+            completed++;
+          }
+        }
+      }else if (algo === 'Priority') {
         while (completed < n) {
           const available = pList.filter(p => p.arrival <= time && p.remaining > 0);
           if (available.length === 0) {
@@ -533,7 +561,6 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
   let rrQueue = [];
 
 while (completed < n) {
-  // Add newly arrived Queue 0 processes to RR queue
   queue0.forEach(p => {
     if (p.arrival <= currentTime && p.remaining > 0 && !rrQueue.includes(p)) {
       rrQueue.push(p);
