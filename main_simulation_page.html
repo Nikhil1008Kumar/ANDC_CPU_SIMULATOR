@@ -378,19 +378,40 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
       document.getElementById('processCard').style.display = 'none';
     }
 
-    function mergeGanttBlocks(log) {
-  if (log.length === 0) return [];
+    function mergeGanttBlocks(log, algo) {
+  if (!log || log.length === 0) return [];
 
   const merged = [log[0]];
+
   for (let i = 1; i < log.length; i++) {
     const last = merged[merged.length - 1];
     const current = log[i];
-    if (last.id === current.id && last.color === current.color) {
-      last.duration = +(last.duration + current.duration).toFixed(2);
+
+    if (algo === 'Multilevel') {
+      // ✅ Only merge FCFS slices (queue 1), never RR (queue 0)
+      if (
+        last.id === current.id &&
+        last.color === current.color &&
+        last.queue === 1 &&
+        current.queue === 1
+      ) {
+        last.duration = +(last.duration + current.duration).toFixed(2);
+      } else {
+        merged.push(current);
+      }
+    } else if (algo !== 'Round Robin') {
+      // ✅ For other algos (FCFS/SJF etc.) allow normal merging
+      if (last.id === current.id && last.color === current.color) {
+        last.duration = +(last.duration + current.duration).toFixed(2);
+      } else {
+        merged.push(current);
+      }
     } else {
+      // ❌ Round Robin — NEVER merge
       merged.push(current);
     }
   }
+
   return merged;
 }
 
@@ -513,133 +534,181 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
           completed++;
         }
          } else if (algo === 'Round Robin') {
-        if (isNaN(quantum) || quantum <= 0) return alert("Enter valid quantum");
-        const queue = [];
-        while (completed < n) {
-          pList.forEach(p => {
-            if (p.arrival <= time && p.remaining > 0 && !queue.includes(p)) queue.push(p);
-          });
+  if (isNaN(quantum) || quantum <= 0) return alert("Enter valid quantum");
 
-          if (!queue.length) {
-            ganttLog.push({ id: 'Idle', color: '#ccc', duration: 0.1 });
-            time = +(time + 0.1).toFixed(2);
-            continue;
-          }
-          const current = queue.shift();
-          const slice = Math.min(current.remaining, quantum);
-          ganttLog.push({ id: `P${current.id}`, color: current.color, duration: slice });
-          current.remaining = +(current.remaining - slice).toFixed(2);
-          time = +(time + slice).toFixed(2);
+  const readyQueue = [];
+  let currentTime = 0;
+  let completed = 0;
+  const arrived = new Set();
 
-          pList.forEach(p => {
-            if (p.arrival > time - slice && p.arrival <= time && p.remaining > 0 && !queue.includes(p)) {
-              queue.push(p);
-            }
-          });
+  while (completed < n) {
+    pList.forEach(p => {
+      if (p.arrival <= currentTime && p.remaining > 0 && !arrived.has(p)) {
+        readyQueue.push(p);
+        arrived.add(p);
+      }
+    });
 
-          if (current.remaining > 0) {
-            queue.push(current);
-          } else {
-            logCompletion(current);
-            completed++;
-          }
-        }
-      } else if (algo === 'Multilevel') {
+    if (readyQueue.length === 0) {
+      const nextArrival = Math.min(...pList.filter(p => p.remaining > 0).map(p => p.arrival));
+      if (nextArrival > currentTime) {
+        ganttLog.push({ id: 'Idle', color: '#ccc', duration: nextArrival - currentTime });
+        currentTime = nextArrival;
+      }
+      continue;
+    }
+
+    const current = readyQueue.shift();
+    const execTime = Math.min(quantum, current.remaining);
+
+    ganttLog.push({
+      id: `P${current.id}`,
+      color: current.color,
+      duration: execTime,
+      queue: 0
+    });
+
+    current.remaining -= execTime;
+    currentTime += execTime;
+
+    pList.forEach(p => {
+      if (
+        p.arrival > currentTime - execTime &&
+        p.arrival <= currentTime &&
+        p.remaining > 0 &&
+        !arrived.has(p)
+      ) {
+        readyQueue.push(p);
+        arrived.add(p);
+      }
+    });
+
+    // If not finished, requeue the process
+    if (current.remaining > 0) {
+      readyQueue.push(current);
+    } else {
+      logCompletion(current);
+      completed++;
+    }
+  }
+} else if (algo === 'Multilevel') {
   if (isNaN(quantum) || quantum <= 0) return alert("Enter valid quantum for Queue 0");
 
   const queue0 = pList.filter(p => p.queueType === 0);
   const queue1 = pList.filter(p => p.queueType === 1);
+
   queue0.forEach(p => p.remaining = p.burst);
   queue1.forEach(p => p.remaining = p.burst);
 
   let currentTime = 0;
-  let completedSet = new Set();
+  let completed = 0;
+  const totalProcesses = pList.length;
+  const rrQueue = [];
+  const fcfsQueue = [];
+  const fcfsSliceBuffer = [];
 
   const getReady = (queue) => queue.filter(p => p.arrival <= currentTime && p.remaining > 0);
 
-  let fcfsQueue = [];
-  let rrQueue = [];
-
-while (completed < n) {
-  queue0.forEach(p => {
-    if (p.arrival <= currentTime && p.remaining > 0 && !rrQueue.includes(p)) {
-      rrQueue.push(p);
-    }
-  });
-
-  if (rrQueue.length > 0) {
-    const current = rrQueue.shift();
-    const slice = Math.min(current.remaining, quantum);
-    ganttLog.push({ id: `P${current.id}`, color: current.color, duration: slice });
-
-    current.remaining -= slice;
-    currentTime += slice;
-
+  while (completed < totalProcesses) {
+    // Load RR queue
     queue0.forEach(p => {
-      if (
-        p.arrival > currentTime - slice &&
-        p.arrival <= currentTime &&
-        p.remaining > 0 &&
-        !rrQueue.includes(p)
-      ) {
+      if (p.arrival <= currentTime && p.remaining > 0 && !rrQueue.includes(p)) {
         rrQueue.push(p);
       }
     });
 
-    if (current.remaining > 0) {
-      rrQueue.push(current);
-    } else {
-      current.completion = currentTime;
-      current.turnaround = +(current.completion - current.arrival).toFixed(2);
-      current.waiting = +(current.turnaround - current.burst).toFixed(2);
-      totalWaiting += current.waiting;
-      totalTurnaround += current.turnaround;
-      table.push(current);
-      completed++;
+    // If RR queue has ready processes, run Round Robin
+    if (rrQueue.length > 0) {
+      const current = rrQueue.shift();
+      const execTime = Math.min(current.remaining, quantum);
+
+      ganttLog.push({ id: `P${current.id}`, color: current.color, duration: execTime });
+
+      current.remaining -= execTime;
+      currentTime += execTime;
+
+      // Add any new RR processes that arrived during execution
+      queue0.forEach(p => {
+        if (
+          p.arrival > currentTime - execTime &&
+          p.arrival <= currentTime &&
+          p.remaining > 0 &&
+          !rrQueue.includes(p)
+        ) {
+          rrQueue.push(p);
+        }
+      });
+
+      if (current.remaining > 0) {
+        rrQueue.push(current); // re-queue for RR
+      } else {
+        current.completion = currentTime;
+        current.turnaround = +(current.completion - current.arrival).toFixed(2);
+        current.waiting = +(current.turnaround - current.burst).toFixed(2);
+        totalWaiting += current.waiting;
+        totalTurnaround += current.turnaround;
+        table.push(current);
+        completed++;
       }
+
     } else {
-      let readyQ1 = getReady(queue1);
-      if (readyQ1.length > 0) {
-        if (fcfsQueue.length === 0) {
-          fcfsQueue.push(...readyQ1.sort((a, b) => a.arrival - b.arrival));
-        }
+      // Run FCFS queue (only if RR is empty)
+      const readyQ1 = getReady(queue1);
 
-        const current = fcfsQueue[0];
-        if (!current) {
-          currentTime += 0.1;
-          ganttLog.push({ id: 'Idle', color: '#ccc', duration: 0.1 });
-          continue;
-        }
+      // Load FCFS queue if empty
+      if (fcfsQueue.length === 0 && readyQ1.length > 0) {
+        fcfsQueue.push(...readyQ1.sort((a, b) => a.arrival - b.arrival));
+      }
 
-        const slice = Math.min(0.1, current.remaining);
-        ganttLog.push({ id: `P${current.id}`, color: current.color, duration: slice });
-        current.remaining -= slice;
-        currentTime = +(currentTime + slice).toFixed(2);
+      const current = fcfsQueue[0];
+      if (current) {
+        // Execute FCFS process one time unit at a time to allow preemption
+        const slice = 1; // Or smaller (e.g., 0.5) for smoother Gantt
+        const execTime = Math.min(current.remaining, slice);
 
-        if (getReady(queue0).length > 0) continue;
+        fcfsSliceBuffer.push({
+      id: `P${current.id}`,
+      color: current.color,
+      duration: execTime,
+      queue: 1
+    });
+    
+        current.remaining -= execTime;
+        currentTime += execTime;
 
-        if (current.remaining === 0) {
+        const newRR = getReady(queue0);
+    if (newRR.length > 0) {
+      continue; // break FCFS execution, keep buffer
+    }
+
+        if (current.remaining <= 0) {
+          const totalDuration = fcfsSliceBuffer.reduce((sum, s) => sum + s.duration, 0);
+      ganttLog.push({
+        id: `P${current.id}`,
+        color: current.color,
+        duration: totalDuration,
+        queue: 1
+      });
+      fcfsSliceBuffer.length = 0;
           current.completion = currentTime;
           current.turnaround = +(current.completion - current.arrival).toFixed(2);
           current.waiting = +(current.turnaround - current.burst).toFixed(2);
           totalWaiting += current.waiting;
           totalTurnaround += current.turnaround;
           table.push(current);
+          fcfsQueue.shift(); // Remove from FCFS queue
           completed++;
-          fcfsQueue.shift();
         }
-        
+
       } else {
-  
-        ganttLog.push({ id: 'Idle', color: '#ccc', duration: 0.1 });
-        currentTime = +(currentTime + 0.1).toFixed(2);
+        // If no FCFS or RR processes ready → Idle
+        ganttLog.push({ id: 'Idle', color: '#ccc', duration: 1 });
+        currentTime += 1;
       }
     }
   }
-      }
-
-
-      const mergedGantt = mergeGanttBlocks(ganttLog);
+}
+      const mergedGantt = mergeGanttBlocks(ganttLog,algo);
 const ganttAndTicksHTML = `
   <div class="scroll-wrapper">
     <div class="gantt-tick-container">
