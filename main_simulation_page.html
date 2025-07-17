@@ -559,31 +559,27 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
     }
 
     const current = readyQueue.shift();
-    const execTime = Math.min(quantum, current.remaining);
+    const slice = Math.min(quantum, current.remaining);
 
     ganttLog.push({
       id: `P${current.id}`,
       color: current.color,
-      duration: execTime,
+      duration: slice,
       queue: 0
     });
 
-    current.remaining -= execTime;
-    currentTime += execTime;
+    current.remaining = +(current.remaining - slice).toFixed(2);
+    time = +(time + slice).toFixed(2);
 
     pList.forEach(p => {
       if (
-        p.arrival > currentTime - execTime &&
-        p.arrival <= currentTime &&
+        p.arrival > time - slice &&
+        p.arrival <= time &&
         p.remaining > 0 &&
-        !arrived.has(p)
-      ) {
-        readyQueue.push(p);
-        arrived.add(p);
-      }
-    });
-
-    // If not finished, requeue the process
+        !readyQueue.includes(p)){
+          readyQueue.push(p);
+        }
+      });
     if (current.remaining > 0) {
       readyQueue.push(current);
     } else {
@@ -689,7 +685,7 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
         duration: totalDuration,
         queue: 1
       });
-      fcfsSliceBuffer.length = 0;
+      fcfsSliceBuffer.length = 0; 
           current.completion = currentTime;
           current.turnaround = +(current.completion - current.arrival).toFixed(2);
           current.waiting = +(current.turnaround - current.burst).toFixed(2);
