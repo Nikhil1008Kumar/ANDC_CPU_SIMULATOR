@@ -345,7 +345,8 @@
       const priority = algo === 'Priority' ? parseInt(document.getElementById('processPriority').value) : null;
       if (!isNaN(arrival) && !isNaN(burst)) {
         const queueType = algo === 'Multilevel' ? parseInt(document.getElementById('queueType').value) : null;
-processes.push({ id: processes.length + 1, arrival, burst, color, priority, queueType });
+processes.push({ id: processes.length + 1, arrival, burst, color, priority, queueType, remaining: burst,           // ✅ Needed for preemptive logic
+  startTime: undefined, responseTime: 0 });
         renderProcessList();
         closeModal();
       if (document.getElementById("output").innerHTML.trim() !== "") {
@@ -388,7 +389,6 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
     const current = log[i];
 
     if (algo === 'Multilevel') {
-      // ✅ Only merge FCFS slices (queue 1), never RR (queue 0)
       if (
         last.id === current.id &&
         last.color === current.color &&
@@ -400,14 +400,12 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
         merged.push(current);
       }
     } else if (algo !== 'Round Robin') {
-      // ✅ For other algos (FCFS/SJF etc.) allow normal merging
       if (last.id === current.id && last.color === current.color) {
         last.duration = +(last.duration + current.duration).toFixed(2);
       } else {
         merged.push(current);
       }
     } else {
-      // ❌ Round Robin — NEVER merge
       merged.push(current);
     }
   }
@@ -422,11 +420,11 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
       const isPreemptive = document.getElementById('preemptive').checked;
       const quantum = parseFloat(document.getElementById('timeQuantum').value);
       const n = processes.length;
-      const pList = processes.map(p => ({ ...p, remaining: p.burst }));
+      const pList = processes.map(p => ({ ...p, remaining: p.burst,startTime: undefined, responseTime: 0}));
       let time = 0, completed = 0;
       const ganttLog = [];
       let table = [];
-      let totalWaiting = 0, totalTurnaround = 0;
+      let totalWaiting = 0, totalTurnaround = 0, totalResponseTime = 0;
 
       function logCompletion(p) {
         p.completion = time;
@@ -434,10 +432,12 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
         p.waiting = +(p.turnaround - p.burst).toFixed(2);
         totalWaiting += p.waiting;
         totalTurnaround += p.turnaround;
+        totalResponseTime += p.responseTime;
         table.push(p);
       }
-
       if (algo === 'SJF' && isPreemptive) {
+        let completed = 0;
+        let totalResponseTime = 0;
         while (completed < n) {
           const available = pList.filter(p => p.arrival <= time && p.remaining > 0);
           if (available.length === 0) {
@@ -447,6 +447,11 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
           }
           available.sort((a, b) => a.remaining - b.remaining);
           const current = available[0];
+          if (current.startTime === undefined) {
+      current.startTime = time;
+      current.responseTime = time - current.arrival;
+      totalResponseTime += current.responseTime;
+    }
           current.remaining = +(current.remaining - 0.1).toFixed(1);
           time = +(time + 0.1).toFixed(1);
 
@@ -474,6 +479,8 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
           ready.sort((a, b) => a.burst - b.burst);
           const current = ready[0];
           time = Math.max(time, current.arrival);
+          current.startTime = time;
+          current.responseTime = time - current.arrival;
           ganttLog.push({ id: `P${current.id}`, color: current.color, duration: current.burst });
           time = +(time + current.burst).toFixed(2);
           logCompletion(current);
@@ -484,6 +491,8 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
         pList.sort((a, b) => a.arrival - b.arrival);
         for (const p of pList) {
           time = Math.max(time, p.arrival);
+          p.startTime = time;
+          p.responseTime = time - p.arrival;
           ganttLog.push({ id: `P${p.id}`, color: p.color, duration: p.burst });
           time = +(time + p.burst).toFixed(2);
           logCompletion(p);
@@ -500,6 +509,10 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
           // Sort by priority (lower number = higher priority)
           available.sort((a, b) => a.priority - b.priority);
           const current = available[0];
+          if (current.startTime === undefined) {
+      current.startTime = time;
+      current.responseTime = time - current.arrival;
+    }
 
           current.remaining = +(current.remaining - 0.1).toFixed(1);
           time = +(time + 0.1).toFixed(1);
@@ -526,6 +539,10 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
           }
           available.sort((a, b) => a.priority - b.priority);
           const current = available[0];
+          if (current.startTime === undefined) {
+  current.startTime = time;
+  current.responseTime = time - current.arrival;
+}
           time = Math.max(time, current.arrival);
           ganttLog.push({ id: `P${current.id}`, color: current.color, duration: current.burst });
           time = +(time + current.burst).toFixed(2);
@@ -559,8 +576,11 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
     }
 
     const current = readyQueue.shift();
+    if (current.startTime === undefined) {
+      current.startTime = currentTime;
+      current.responseTime = current.arrival - currentTime;
+    }
     const slice = Math.min(quantum, current.remaining);
-
     ganttLog.push({
       id: `P${current.id}`,
       color: current.color,
@@ -593,8 +613,8 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
   const queue0 = pList.filter(p => p.queueType === 0);
   const queue1 = pList.filter(p => p.queueType === 1);
 
-  queue0.forEach(p => p.remaining = p.burst);
-  queue1.forEach(p => p.remaining = p.burst);
+  queue0.forEach(p =>{ p.remaining = p.burst; p.startTime = null; p.responseTime = null;});
+  queue1.forEach(p =>{ p.remaining = p.burst; p.startTime = null; p.responseTime = null;});
 
   let currentTime = 0;
   let completed = 0;
@@ -616,8 +636,12 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
     // If RR queue has ready processes, run Round Robin
     if (rrQueue.length > 0) {
       const current = rrQueue.shift();
+      if (current.startTime === null) {
+  current.startTime = currentTime;
+  current.responseTime = currentTime - current.arrival;
+}
       const execTime = Math.min(current.remaining, quantum);
-
+      
       ganttLog.push({ id: `P${current.id}`, color: current.color, duration: execTime });
 
       current.remaining -= execTime;
@@ -643,6 +667,7 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
         current.waiting = +(current.turnaround - current.burst).toFixed(2);
         totalWaiting += current.waiting;
         totalTurnaround += current.turnaround;
+        totalResponseTime += current.responseTime;
         table.push(current);
         completed++;
       }
@@ -658,10 +683,12 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
 
       const current = fcfsQueue[0];
       if (current) {
-        // Execute FCFS process one time unit at a time to allow preemption
-        const slice = 1; // Or smaller (e.g., 0.5) for smoother Gantt
+        if (current.startTime === null) {
+  current.startTime = currentTime;
+  current.responseTime = currentTime - current.arrival;
+}
+        const slice = 1;
         const execTime = Math.min(current.remaining, slice);
-
         fcfsSliceBuffer.push({
       id: `P${current.id}`,
       color: current.color,
@@ -691,6 +718,7 @@ processes.push({ id: processes.length + 1, arrival, burst, color, priority, queu
           current.waiting = +(current.turnaround - current.burst).toFixed(2);
           totalWaiting += current.waiting;
           totalTurnaround += current.turnaround;
+          totalResponseTime += current.responseTime;
           table.push(current);
           fcfsQueue.shift(); // Remove from FCFS queue
           completed++;
@@ -746,6 +774,7 @@ const ganttAndTicksHTML = `
 
       const avgWait = (totalWaiting / n).toFixed(2);
       const avgTat = (totalTurnaround / n).toFixed(2);
+      const avgRT = (totalResponseTime / n).toFixed(2);
       const totalBurstTime = pList.reduce((sum, p) => sum + p.burst, 0);
       const completedProcs = pList.filter(p => p.completion !== undefined);
 const totalStartTime = Math.min(...completedProcs.map(p => p.arrival));
@@ -765,6 +794,7 @@ const cpuUtil = ((totalBurstTime / totalTime) * 100).toFixed(2);
       <th>Completion Time</th>
       <th>Waiting Time</th>
       <th>Turnaround Time</th>
+      <th>Response Time</th>
     </tr>
     ${table.map(p => `
       <tr>
@@ -774,6 +804,7 @@ const cpuUtil = ((totalBurstTime / totalTime) * 100).toFixed(2);
         <td>${p.completion.toFixed(2)}</td>
         <td>${p.waiting.toFixed(2)}</td>
         <td>${p.turnaround.toFixed(2)}</td>
+        <td>${p.responseTime.toFixed(2)}</td>
       </tr>
     `).join('')}
     <tr>
@@ -781,6 +812,7 @@ const cpuUtil = ((totalBurstTime / totalTime) * 100).toFixed(2);
       <td>–</td>
       <td><strong>${totalWaiting.toFixed(2)}</strong></td>
       <td><strong>${totalTurnaround.toFixed(2)}</strong></td>
+      <td><strong>${totalResponseTime.toFixed(2)}</strong></td>
     </tr>
   </table>`;
 
@@ -788,6 +820,7 @@ const cpuUtil = ((totalBurstTime / totalTime) * 100).toFixed(2);
   <div class="metrics-box">
     <p><strong>Avg Waiting Time:</strong> ${avgWait}</p>
     <p><strong>Avg Turnaround Time:</strong> ${avgTat}</p>
+    <p><strong>Avg Response Time:</strong> ${avgRT}</p>
     <p><strong>Throughput:</strong> ${throughput}</p>
   </div>`;
       document.getElementById('output').innerHTML = `
